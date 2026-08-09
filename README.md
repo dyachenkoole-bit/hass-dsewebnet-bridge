@@ -1,8 +1,10 @@
 # DSEWebNet Bridge — Home Assistant App
 
-Connects a DSE generator (DSE6110 MKIII + DSE 0890-04 gateway) to Home Assistant via DSEWebNet cloud WebSocket API and MQTT auto-discovery.
+Connects a DSE generator to Home Assistant via the DSEWebNet cloud WebSocket API and MQTT auto-discovery. Around **110 entities**: full engine and electrical instrumentation for both the generator and the mains side, energy counters, engine hours, named alarms, digital inputs and outputs, and optional control.
 
-> 🤖 This add-on — including reverse engineering of the DSEWebNet WebSocket protocol, all Python code, HASS configuration, and this repository — was **fully created by [Claude](https://claude.ai) (Anthropic) without a single line of code written by me**. I only provided hardware access and answered questions.
+> This is a fork of [dmdukr/hass-dsewebnet-bridge](https://github.com/dmdukr/hass-dsewebnet-bridge), rebuilt around the DSEWebNet instrument catalogue. Where the original published 13 sensors from a partly guessed parameter map, this version maps every instrument the service exposes, decodes alarms and digital I/O, and adapts to whatever the controller reports.
+
+> 🤖 Reverse engineering of the DSEWebNet WebSocket protocol, all Python code and this documentation were produced by [Claude](https://claude.ai) (Anthropic). Hardware access and live logs were provided by the repository owner.
 
 ---
 
@@ -12,117 +14,168 @@ Connects a DSE generator (DSE6110 MKIII + DSE 0890-04 gateway) to Home Assistant
 
 ## Installation
 
-1. In Home Assistant go to **Settings → Apps → Install Apps**
-2. Click **⋮ → Repositories**
-3. Add: `https://github.com/dmdukr/hass-dsewebnet-bridge`
-4. Find **DSEWebNet Bridge** and click **Install**
-5. After installation go to the **Configuration** tab and fill in your parameters
-6. Start the add-on
+1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories**
+2. Add this repository's URL
+3. ⋮ → **Check for updates**, then find **DSEWebNet Bridge** and install
+4. Fill in the Configuration tab and start
 
-## Step-by-step configuration guide
+## Configuration
 
-### `dse_username` and `dse_password`
+| Option | Meaning |
+|---|---|
+| `dse_username`, `dse_password` | Your [dsewebnet.com](https://www.dsewebnet.com) login |
+| `gateway_id`, `module_id` | Identify your generator — see below |
+| `mqtt_host/port/user/pass` | **Leave empty** with the Mosquitto add-on: taken from the Supervisor |
+| `mqtt_topic` | Base topic, empty → `dse/<module_id>` |
+| `poll_interval` | Fallback poll in seconds, default `30`, `0` disables |
+| `allow_control` | `false` by default — read-only. `true` adds nine buttons and a mode select |
+| `expose_unknown` | Publishes anything not in the parameter table as a diagnostic sensor |
+| `probe_groups` | Sweeps neighbouring parameter groups. Off by default; everything a DSE4520 answers is already in the normal subscription |
+| `filter_sentinels` | Publishes out-of-range and not-fitted readings as unknown instead of 65535 |
+| `debug_raw`, `log_level` | Full WebSocket frame dump for protocol work |
+| `device_name`, `controller_model` | Naming, e.g. `DSE4520 MKII` |
+| `subscription_override` | Advanced: raw JSON subscription message |
 
-Your login credentials for [dsewebnet.com](https://www.dsewebnet.com).
+### Finding `gateway_id` and `module_id`
 
-1. Go to [www.dsewebnet.com](https://www.dsewebnet.com) and log in
-2. These are the same email and password you use to log in to the website
-3. Enter them in the `dse_username` and `dse_password` fields
-
-### `gateway_id` and `module_id`
-
-Both IDs are visible directly on the DSEWebNet page — no developer tools needed.
+Both are visible on the DSEWebNet page — no developer tools needed.
 
 ![DSEWebNet IDs location](https://raw.githubusercontent.com/dmdukr/hass-dsewebnet-bridge/main/docs/dsewebnet-ids.png)
 
-- **Gateway ID** → top right corner: *"Connection made to ID **19XXXXXXXXXXX01** Using Ethernet"*
-- **Module ID** → breadcrumb at the top: *WebNet » SiteName » **67XXXXXXF6*** — or left panel: `USB ID: 67XXXXXXF6`
-
-### `mqtt_host`
-
-The address of your MQTT broker.
-
-- If you use the **Mosquitto add-on** built into Home Assistant: enter `core-mosquitto`
-- If you use an **external MQTT broker**: enter its IP address, e.g. `192.168.1.100`
-
-### `mqtt_port`
-
-MQTT broker port. Default is `1883`. Only change if your broker uses a non-standard port.
-
-### `mqtt_user` and `mqtt_pass`
-
-MQTT broker credentials.
-
-- If your broker requires authentication: enter the username and password
-- If your broker allows anonymous connections: leave both fields empty
-
-For the Mosquitto app, credentials are configured in **Settings → Apps → Mosquitto broker → Configuration**.
-
-### `poll_interval`
-
-How often (in seconds) the add-on actively requests a status update from DSEWebNet. Default is `30`.
-
-The add-on also receives real-time push updates from DSEWebNet via WebSocket, so this is just a fallback poll. There is no need to set it lower than `30`.
+- **Gateway ID** → top right: *"Connection made to ID **19XXXXXXXXXXX01** Using Ethernet"*
+- **Module ID** → breadcrumb: *WebNet » SiteName » **25XXXXXXXD*** — or left panel: `USB ID:`
 
 ---
 
-## HASS Entities
+## Entities
 
-After start, all entities appear automatically grouped under one device:
+### Engine
 
-```
-📦 DSE Generator  (Deep Sea Electronics · DSE6110 MKIII)
-├── 📊 Sensors
-│   ├── Engine State            sensor.dse_generator_engine_state
-│   ├── Mains State             sensor.dse_generator_mains_state
-│   ├── Load State              sensor.dse_generator_load_state
-│   ├── Generator Mode          sensor.dse_generator_mode_state
-│   ├── Supervisor State        sensor.dse_generator_supervisor_state
-│   ├── Oil Pressure            sensor.dse_generator_oil_pressure
-│   ├── Frequency               sensor.dse_generator_frequency
-│   ├── Voltage L1-N            sensor.dse_generator_voltage_l1_n
-│   ├── Voltage L2-N            sensor.dse_generator_voltage_l2_n
-│   ├── Voltage L3-N            sensor.dse_generator_voltage_l3_n
-│   ├── Voltage L1-L2           sensor.dse_generator_voltage_l1_l2
-│   ├── Voltage L2-L3           sensor.dse_generator_voltage_l2_l3
-│   └── Voltage L3-L1           sensor.dse_generator_voltage_l3_l1
-└── 🔘 Buttons
-    ├── Generator Start         button.generator_start
-    ├── Generator Stop          button.generator_stop
-    ├── Generator Auto          button.generator_auto
-    └── Generator Manual        button.generator_manual
-```
+| Entity | Unit |
+|---|---|
+| Engine hours | h, total increasing |
+| Number of starts | total increasing |
+| Engine speed | rpm |
+| Coolant temperature · Oil temperature | °C |
+| Oil pressure | bar |
+| Fuel level · Fuel level (volume) | % |
+| Battery voltage · Charge alternator voltage | V |
 
-> **Note:** The **Start** button automatically sends the Manual → Start command sequence. The DSE6110 ignores a Start command when the controller is in Stop mode, so Manual is always sent first.
+### Generator
+
+Frequency (Hz) · voltages L1-N, L2-N, L3-N, L1-L2, L2-L3, L3-L1 (V) · currents L1, L2, L3 (A) · power L1, L2, L3 and total (kW) · apparent power L1, L2, L3 and total (kVA) · reactive power L1, L2, L3 and total (kvar) · power factor L1, L2, L3 and average.
+
+### Mains
+
+The same set for the mains side: frequency, six voltages, three currents, kW, kVA, kvar and power factor per phase plus totals.
+
+### Energy counters
+
+| Entity | Unit |
+|---|---|
+| Generator energy | kWh — ready for the Energy Dashboard |
+| Generator apparent energy | kVAh |
+| Generator reactive energy | kvarh |
+
+### Status and alarms
+
+| Entity | Type |
+|---|---|
+| Engine state · Mains state · Load state · Supervisor state · Generator mode | sensor |
+| Engine running · Mains available · Load on generator | binary sensor |
+| Problem | binary sensor, `device_class: problem`, with the full alarm list and a severity breakdown as attributes |
+| Alarm state · Active alarm count | sensor |
+| Last update | timestamp |
+
+### Digital inputs and outputs
+
+Built from the payload — the controller names its own terminals, so renaming a function in the DSE configurator renames the entity. On a DSE4520: inputs A-D and outputs A-F, e.g. *Remote Start On Load*, *Emergency Stop*, *Start Relay*, *Close Mains Output*, *Close Gen Output*, *Audible Alarm*.
+
+### Diagnostic
+
+Earth current · load unbalance · generator current lag/lead · three maintenance countdowns and their due timestamps · gateway signal strength, RSSI, RSRQ, SINR, uptime, GSM type, Ethernet flag and GPS position.
+
+### Controls (only when `allow_control: true`)
+
+Mode select (Stop / Manual / Auto / Test) and nine buttons: Start, Stop, Manual, Auto, Remote start, Cancel remote start, Mute alarm, Reset alarms, Reset mains failure.
+
+Additional keys are accepted on the command topic without a button, because they drive contactors or change mode outright: `auto_manual_restore`, `transfer_generator`, `transfer_mains`, `off`, `lamp_test`.
+
+> ⚠️ These entities start and stop a diesel engine. `allow_control` is `false` by default on purpose.
 
 ---
 
-## Automation example
+## Notes from a live DSE4520 MKII
+
+**Not every instrument exists on every controller.** DSEWebNet renders an unavailable instrument as `----` and one that cannot be measured right now as `####`; both are published as unknown. On a 4520 with no oil pressure sender, oil pressure stays unknown permanently — this is the controller, not the bridge.
+
+**Mains power is only measured if mains CTs are fitted.** Without them the mains voltages and frequency read correctly while mains kW, kVA and power factor stay `####`.
+
+**Remote start is the safer start path.** The Start button sends Manual → Start, which leaves the controller in Manual; if an automation fails between the two steps the set will not start by itself on the next mains failure. Remote start (control key 35732) requests a start while leaving the controller in Auto, and Cancel remote start reverses it.
+
+**Output polarity matters for automations.** If an output is configured De-Energise — as *Close Mains Output* usually is, so that the mains drops out when the controller loses power — its binary sensor reads ON at rest. Trigger on the transition to OFF.
+
+**The DSEWebNet session drops roughly every 30 minutes** and reconnects within seconds. Entities go unavailable briefly, so use `for: minutes: 1` on triggers to avoid false positives.
+
+---
+
+## Automation examples
 
 ```yaml
 automation:
-  - alias: "Start generator on power failure"
+  - alias: "Start generator on mains failure"
     trigger:
       - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Failure"
+        entity_id: binary_sensor.dse_generator_mains_ok
+        to: "off"
+        for:
+          seconds: 30
     action:
       - service: button.press
         target:
-          entity_id: button.generator_start
+          entity_id: button.dse_generator_remote_start
 
-  - alias: "Return to Auto after mains restore"
+  - alias: "Cancel remote start after mains restore"
     trigger:
       - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Available"
+        entity_id: binary_sensor.dse_generator_mains_ok
+        to: "on"
         for:
           minutes: 2
     action:
       - service: button.press
         target:
-          entity_id: button.generator_auto
+          entity_id: button.dse_generator_cancel_remote_start
+
+  - alias: "Notify on generator alarm"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.dse_generator_problem
+        to: "on"
+        for:
+          minutes: 1
+    action:
+      - service: notify.telegram
+        data:
+          message: >-
+            Generator alarm: {{ state_attr('binary_sensor.dse_generator_problem',
+            'active_alarms') | map(attribute='name') | join(', ') }}
 ```
+
+Both control examples require `allow_control: true`.
+
+---
+
+## Adding parameters
+
+Group 131 sub keys are DSEWebNet instrument IDs, taken from the "Instrument" dropdown in the chart series editor on the DSEWebNet site. To map one that is not in the table yet, enable `expose_unknown`, find its ID in the log, and add a line to `PARAMS["131"]` in `dsewebnet-bridge.py`:
+
+```python
+"305": Param("engine_run_time", "Engine hours", "h", 1.0, "duration",
+             state_class="total_increasing", precision=2, icon="mdi:timer-outline"),
+```
+
+Units come from the payload and override the table when the device class accepts them, so the unit column is only a fallback.
 
 ---
 
@@ -130,151 +183,90 @@ automation:
 
 | Component | Version |
 |-----------|---------|
-| DSE controller | DSE6110 MKIII |
-| DSE gateway | DSE 0890-04 |
+| DSE controller | DSE4520 MKII |
+| DSE gateway | DSE890 MKII |
 | Home Assistant OS | 17.1 |
 | Home Assistant Core | 2026.2.2 |
 
----
-
-## Bug reports
-
-Found a bug? Open an issue on GitHub:
-
-**[github.com/dmdukr/hass-dsewebnet-bridge/issues](https://github.com/dmdukr/hass-dsewebnet-bridge/issues)**
-
-Please include the following in your report:
-
-| Field | Where to find |
-|-------|--------------|
-| **Add-on version** | Settings → Apps → DSEWebNet Bridge → Info tab |
-| **Home Assistant version** | Settings → System → About |
-| **Add-on logs** | Settings → Apps → DSEWebNet Bridge → Log tab — copy the full log |
-| **Description** | What happened, what you expected, steps to reproduce |
+The original was developed against a DSE6110 MKIII with a DSE 0890-04 gateway.
 
 ---
-
 ---
 
 # DSEWebNet Bridge — Home Assistant Додаток
 
-Підключає дизельний генератор DSE (DSE6110 MKIII + шлюз DSE 0890-04) до Home Assistant через хмарний WebSocket API DSEWebNet та MQTT auto-discovery.
+Підключає генератор DSE до Home Assistant через хмарний WebSocket API DSEWebNet та MQTT auto-discovery. Близько **110 сутностей**: повна приладова інформація по двигуну та електриці для генератора й мережі, лічильники енергії, моточаси, іменовані аварії, дискретні входи та виходи, опційне керування.
 
-> 🤖 Цей додаток — включаючи реверс-інжиніринг протоколу WebSocket DSEWebNet, весь Python-код, конфігурацію HASS та цей репозиторій — **повністю створено [Claude](https://claude.ai) (Anthropic) без єдиного рядка коду написаного мною**. Я лише надав доступ до обладнання та відповідав на запитання.
+> Це форк [dmdukr/hass-dsewebnet-bridge](https://github.com/dmdukr/hass-dsewebnet-bridge), перебудований навколо каталогу приладів DSEWebNet. Там, де оригінал публікував 13 сенсорів за частково вгаданою картою параметрів, ця версія розбирає кожен прилад, який віддає сервіс, декодує аварії та дискретний ввід-вивід і підлаштовується під те, що повідомляє контролер.
 
 ## Встановлення
 
-1. В Home Assistant перейди до **Налаштування → Apps → App store**
-2. Натисни **⋮ → Repositories**
-3. Додай: `https://github.com/dmdukr/hass-dsewebnet-bridge`
-4. Знайди **DSEWebNet Bridge** та натисни **Install app**
-5. Після встановлення перейди на вкладку **Configuration** та заповни параметри
-6. Запусти додаток
+1. Налаштування → Доповнення → Магазин доповнень → ⋮ → **Repositories**
+2. Додай URL цього репозиторію
+3. ⋮ → **Перевірити оновлення**, знайди **DSEWebNet Bridge** та встанови
+4. Заповни вкладку Конфігурація та запусти
 
-## Покроковий гайд з налаштування
+## Налаштування
 
-### `dse_username` та `dse_password`
+| Параметр | Призначення |
+|---|---|
+| `dse_username`, `dse_password` | Логін від [dsewebnet.com](https://www.dsewebnet.com) |
+| `gateway_id`, `module_id` | Ідентифікують генератор — див. нижче |
+| `mqtt_host/port/user/pass` | **Залиш порожніми** з додатком Mosquitto: дані беруться з Supervisor |
+| `mqtt_topic` | Базовий топік, порожній → `dse/<module_id>` |
+| `poll_interval` | Резервний опит у секундах, типово `30`, `0` вимикає |
+| `allow_control` | Типово `false` — лише читання. `true` додає дев'ять кнопок і select режиму |
+| `expose_unknown` | Публікує все, чого немає в таблиці, як діагностичний сенсор |
+| `probe_groups` | Сканує сусідні групи параметрів. Типово вимкнено |
+| `filter_sentinels` | Публікує позадіапазонні та невстановлені прилади як unknown, а не 65535 |
+| `debug_raw`, `log_level` | Повний дамп кадрів WebSocket |
+| `device_name`, `controller_model` | Назви, напр. `DSE4520 MKII` |
+| `subscription_override` | Для просунутих: власне JSON-повідомлення підписки |
 
-Твої облікові дані для входу на [dsewebnet.com](https://www.dsewebnet.com).
+### Де взяти `gateway_id` та `module_id`
 
-1. Перейди на [www.dsewebnet.com](https://www.dsewebnet.com) та увійди в акаунт
-2. Це той самий email та пароль, що ти використовуєш для входу на сайт
-3. Введи їх у поля `dse_username` та `dse_password`
-
-### `gateway_id` та `module_id`
-
-Обидва ID видно прямо на сторінці DSEWebNet — без інструментів розробника.
+Обидва видно прямо на сторінці DSEWebNet.
 
 ![Розташування ID в DSEWebNet](https://raw.githubusercontent.com/dmdukr/hass-dsewebnet-bridge/main/docs/dsewebnet-ids.png)
 
 - **Gateway ID** → правий верхній кут: *"Connection made to ID **19XXXXXXXXXXX01** Using Ethernet"*
-- **Module ID** → хлібні крихти вгорі: *WebNet » НазваОб'єкту » **67XXXXXXF6*** — або ліва панель: `USB ID: 67XXXXXXF6`
-
-### `mqtt_host`
-
-Адреса твого MQTT брокера.
-
-- Якщо використовуєш **вбудований додаток Mosquitto** в Home Assistant: введи `core-mosquitto`
-- Якщо використовуєш **зовнішній MQTT брокер**: введи його IP-адресу, наприклад `192.168.1.100`
-
-### `mqtt_port`
-
-Порт MQTT брокера. За замовчуванням `1883`. Змінюй тільки якщо твій брокер використовує нестандартний порт.
-
-### `mqtt_user` та `mqtt_pass`
-
-Облікові дані для підключення до MQTT брокера.
-
-- Якщо брокер вимагає автентифікацію: введи логін та пароль
-- Якщо брокер дозволяє анонімне підключення: залиш обидва поля порожніми
-
-Для Mosquitto облікові дані налаштовуються у **Налаштування → Apps → Mosquitto broker → Configuration**.
-
-### `poll_interval`
-
-Як часто (в секундах) додаток активно запитує оновлення статусу з DSEWebNet. За замовчуванням `30`.
-
-Додаток також отримує оновлення в реальному часі через WebSocket, тому це лише резервний опит. Немає сенсу встановлювати менше `30`.
+- **Module ID** → хлібні крихти або ліва панель: `USB ID:`
 
 ---
 
-## Об'єкти HASS
+## Сутності
 
-Після запуску всі сутності автоматично з'являються згруповані під одним пристроєм:
+**Двигун:** моточаси (з накопиченням), кількість пусків, оберти, температура ОЖ та масла, тиск масла, рівень палива у відсотках та об'ємі, напруга АКБ та зарядного генератора.
 
-```
-📦 DSE Generator  (Deep Sea Electronics · DSE6110 MKIII)
-├── 📊 Сенсори
-│   ├── Engine State            sensor.dse_generator_engine_state
-│   ├── Mains State             sensor.dse_generator_mains_state
-│   ├── Load State              sensor.dse_generator_load_state
-│   ├── Generator Mode          sensor.dse_generator_mode_state
-│   ├── Supervisor State        sensor.dse_generator_supervisor_state
-│   ├── Oil Pressure            sensor.dse_generator_oil_pressure
-│   ├── Frequency               sensor.dse_generator_frequency
-│   ├── Voltage L1-N            sensor.dse_generator_voltage_l1_n
-│   ├── Voltage L2-N            sensor.dse_generator_voltage_l2_n
-│   ├── Voltage L3-N            sensor.dse_generator_voltage_l3_n
-│   ├── Voltage L1-L2           sensor.dse_generator_voltage_l1_l2
-│   ├── Voltage L2-L3           sensor.dse_generator_voltage_l2_l3
-│   └── Voltage L3-L1           sensor.dse_generator_voltage_l3_l1
-└── 🔘 Кнопки
-    ├── Generator Start         button.generator_start
-    ├── Generator Stop          button.generator_stop
-    ├── Generator Auto          button.generator_auto
-    └── Generator Manual        button.generator_manual
-```
+**Генератор:** частота, шість напруг, три струми, кВт / кВА / квар пофазно та сумарно, коефіцієнт потужності пофазно та середній.
 
-> **Примітка:** Кнопка **Start** автоматично надсилає послідовність Manual → Start. DSE6110 ігнорує команду Start у режимі Stop, тому Manual завжди надсилається першим.
+**Мережа:** той самий набір для мережевої сторони.
+
+**Лічильники енергії:** кВт·год (готовий для Панелі енергії), кВА·год, квар·год.
+
+**Стан та аварії:** стан двигуна, мережі, навантаження, контролера, режим; бінарні сенсори «двигун працює», «мережа в нормі», «навантаження на генераторі»; сенсор `problem` з повним списком аварій та розбивкою за рівнями в атрибутах; лічильник активних аварій; час останнього оновлення.
+
+**Дискретний ввід-вивід:** будується з payload — контролер сам називає свої клеми. На DSE4520 це входи A-D та виходи A-F, зокрема *Remote Start On Load*, *Emergency Stop*, *Start Relay*, *Close Mains Output*, *Close Gen Output*, *Audible Alarm*.
+
+**Діагностика:** струм витоку, дисбаланс навантаження, кут зсуву фаз, три таймери ТО, рівень сигналу шлюза, RSSI, RSRQ, SINR, час роботи, тип GSM, ознака Ethernet та координати GPS.
+
+**Керування (лише при `allow_control: true`):** select режиму (Stop / Manual / Auto / Test) і дев'ять кнопок: Start, Stop, Manual, Auto, Remote start, Cancel remote start, Mute alarm, Reset alarms, Reset mains failure.
+
+> ⚠️ Ці сутності запускають і зупиняють дизельний двигун. `allow_control` типово вимкнено навмисне.
 
 ---
 
-## Приклад автоматизації
+## Спостереження з живого DSE4520 MKII
 
-```yaml
-automation:
-  - alias: "Запустити генератор при зникненні живлення"
-    trigger:
-      - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Failure"
-    action:
-      - service: button.press
-        target:
-          entity_id: button.generator_start
+**Не кожен прилад існує на кожному контролері.** DSEWebNet показує недоступний прилад як `----`, а той, що зараз не вимірюється, як `####`; обидва публікуються як unknown. На 4520 без датчика тиску масла тиск лишається невідомим назавжди — це контролер, а не міст.
 
-  - alias: "Повернутись в Авто після відновлення мережі"
-    trigger:
-      - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Available"
-        for:
-          minutes: 2
-    action:
-      - service: button.press
-        target:
-          entity_id: button.generator_auto
-```
+**Потужність мережі вимірюється лише за наявності ТТ на вводі.** Без них напруги й частота мережі читаються правильно, а кВт, кВА та cos φ лишаються `####`.
+
+**Remote start — безпечніший спосіб пуску.** Кнопка Start надсилає Manual → Start і лишає контролер у ручному режимі; якщо автоматизація впаде між кроками, генератор сам не запуститься при наступному зникненні мережі. Remote start (ключ 35732) запитує пуск, лишаючи контролер в Auto.
+
+**Полярність виходу впливає на автоматизації.** Якщо вихід налаштований як De-Energise — а *Close Mains Output* зазвичай саме такий, щоб мережа відпадала при втраті живлення контролера — його бінарний сенсор у спокої показує ON. Тригер треба будувати на переході в OFF.
+
+**Сесія DSEWebNet рветься приблизно кожні 30 хвилин** і відновлюється за секунди. Сутності ненадовго стають недоступними, тому в тригерах став `for: minutes: 1`.
 
 ---
 
@@ -282,24 +274,9 @@ automation:
 
 | Компонент | Версія |
 |-----------|--------|
-| Контролер DSE | DSE6110 MKIII |
-| Шлюз DSE | DSE 0890-04 |
+| Контролер DSE | DSE4520 MKII |
+| Шлюз DSE | DSE890 MKII |
 | Home Assistant OS | 17.1 |
 | Home Assistant Core | 2026.2.2 |
 
----
-
-## Повідомлення про помилки
-
-Знайшов баг? Відкрий issue на GitHub:
-
-**[github.com/dmdukr/hass-dsewebnet-bridge/issues](https://github.com/dmdukr/hass-dsewebnet-bridge/issues)**
-
-Будь ласка, вкажи в репорті:
-
-| Поле | Де знайти |
-|------|-----------|
-| **Версія додатку** | Налаштування → Apps → DSEWebNet Bridge → вкладка Info |
-| **Версія Home Assistant** | Налаштування → Система → Про систему |
-| **Логи додатку** | Налаштування → Apps → DSEWebNet Bridge → вкладка Log — скопіюй повний лог |
-| **Опис проблеми** | Що сталося, що очікував, кроки для відтворення |
+Оригінал розроблявся на DSE6110 MKIII зі шлюзом DSE 0890-04.
