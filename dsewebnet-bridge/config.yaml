@@ -1,31 +1,54 @@
 name: "DSEWebNet Bridge"
 description: "DSEWebNet → MQTT Bridge for Home Assistant. Connects to DSEWebNet cloud and publishes DSE generator data via MQTT auto-discovery."
-version: "1.0.1"
+version: "2.1.1"
 slug: "dsewebnet_bridge"
-url: "https://github.com/dmdukr/hass-dsewebnet-bridge"
+url: "https://github.com/dyachenkoole-bit/hass-dsewebnet-bridge"
 init: false
+startup: services
+boot: auto
 arch:
   - amd64
   - aarch64
-  - armhf
   - armv7
+services:
+  - mqtt:want
 options:
   dse_username: ""
   dse_password: ""
-  gateway_id: "19128A7F6315501"
-  module_id: "6729830DF6"
-  mqtt_host: "core-mosquitto"
+  gateway_id: ""
+  module_id: ""
+  mqtt_host: ""
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_pass: ""
+  mqtt_topic: ""
   poll_interval: 30
+  allow_control: false
+  expose_unknown: false
+  probe_groups: false
+  filter_sentinels: true
+  debug_raw: false
+  log_level: "info"
+  device_name: "DSE Generator"
+  controller_model: "DSE4520 MKII"
+  subscription_override: ""
 schema:
   dse_username: str
-  dse_password: str
-  gateway_id: str
-  module_id: str
-  mqtt_host: str
-  mqtt_port: int
-  mqtt_user: str
-  mqtt_pass: str
-  poll_interval: int
+  dse_password: password
+  gateway_id: str?
+  module_id: str?
+  mqtt_host: str?
+  mqtt_port: int(1,65535)?
+  mqtt_user: str?
+  mqtt_pass: password?
+  mqtt_topic: str?
+  poll_interval: int(0,3600)
+  allow_control: bool
+  expose_unknown: bool
+  probe_groups: bool
+  filter_sentinels: bool
+  debug_raw: bool
+  log_level: list(trace|debug|info|warning|error)
+  device_name: str?
+  controller_model: str?
+  subscription_override: str?

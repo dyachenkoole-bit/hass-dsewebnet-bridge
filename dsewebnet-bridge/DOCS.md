@@ -1,133 +1,157 @@
 # DSEWebNet Bridge
 
-Connects a DSE generator (DSE6110 MKIII + DSE 0890-04 gateway) to Home Assistant via DSEWebNet cloud WebSocket API and MQTT auto-discovery.
+Connects a DSE generator to Home Assistant through the DSEWebNet cloud
+WebSocket API and MQTT auto-discovery. Around 110 entities.
 
-> 🤖 This add-on — including reverse engineering of the DSEWebNet WebSocket protocol, all Python code, and HASS configuration — was **fully created by [Claude](https://claude.ai) (Anthropic) without a single line of code written by me**. I only provided hardware access and answered questions.
+## Configuration
 
----
+### `dse_username` / `dse_password`
 
-## Step-by-step configuration guide
+Your login for [dsewebnet.com](https://www.dsewebnet.com) — the same email and
+password used on the website.
 
-### `dse_username` and `dse_password`
+### `gateway_id` / `module_id`
 
-Your login credentials for [dsewebnet.com](https://www.dsewebnet.com).
-
-1. Go to [www.dsewebnet.com](https://www.dsewebnet.com) and log in
-2. These are the same email and password you use to log in to the website
-3. Enter them in the `dse_username` and `dse_password` fields in the **Configuration** tab
-
-### `gateway_id` and `module_id`
-
-Both IDs are visible directly on the DSEWebNet page — no developer tools needed.
+Both IDs are visible on the DSEWebNet page.
 
 ![DSEWebNet IDs location](https://raw.githubusercontent.com/dmdukr/hass-dsewebnet-bridge/main/docs/dsewebnet-ids.png)
 
-- **Gateway ID** → top right corner: *"Connection made to ID **19XXXXXXXXXXX01** Using Ethernet"*
-- **Module ID** → breadcrumb at the top: *WebNet » SiteName » **67XXXXXXF6*** — or left panel: `USB ID: 67XXXXXXF6`
+- **Gateway ID** → top right: *"Connection made to ID **19XXXXXXXXXXX01** Using Ethernet"*
+- **Module ID** → breadcrumb at the top, or the left panel: `USB ID:`
 
-### `mqtt_host`
+Both are required for control, and strongly recommended in any case: with
+several sites on one account they keep foreign data out of your device.
 
-- If you use the **Mosquitto broker** app built into Home Assistant: enter `core-mosquitto`
-- If you use an **external MQTT broker**: enter its IP address, e.g. `192.168.1.100`
+### `mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_pass`
 
-### `mqtt_port`
+**Leave all four empty** when using the Mosquitto broker add-on — the settings
+are taken from the Supervisor automatically. Fill them in only for an external
+broker.
 
-MQTT broker port. Default is `1883`.
+### `mqtt_topic`
 
-### `mqtt_user` and `mqtt_pass`
-
-MQTT credentials. Leave empty if your broker allows anonymous connections.
-
-For the Mosquitto app, credentials are configured in **Settings → Apps → Mosquitto broker → Configuration**.
+Base MQTT topic. Empty means `dse/<module_id>`.
 
 ### `poll_interval`
 
-How often (in seconds) the add-on actively requests a status update from DSEWebNet. Default is `30`. No need to set lower — the add-on also receives real-time push updates via WebSocket.
+How often (seconds) the add-on re-sends its subscription. Default `30`. Data
+also arrives as push updates, so this is only a fallback. `0` disables it.
+
+### `allow_control`
+
+`false` (default) — read-only. `true` publishes a mode select and nine buttons,
+and requires both `gateway_id` and `module_id`.
+
+> ⚠️ These entities start and stop a diesel engine.
+
+### `expose_unknown`
+
+Publishes any parameter that arrives but is not in the parameter table as a
+diagnostic sensor named `p<group>_<id>`. Values carry the units the payload
+states, so an unidentified instrument is still readable and recordable.
+
+### `probe_groups`
+
+Sweeps parameter groups 120-144 and gateway data blocks 0-15 looking for
+anything not already subscribed. Off by default — on a DSE4520 everything the
+service answers is already in the normal subscription.
+
+### `filter_sentinels`
+
+On by default. GenComm reserves the top of each integer range for "out of
+range", "sensor fault", "not fitted" and similar, and DSEWebNet additionally
+renders them as `----` and `####`. With this on they are published as unknown
+rather than being recorded as 65535.
+
+### `debug_raw` / `log_level`
+
+`debug_raw: true` with `log_level: debug` dumps every WebSocket frame. Useful
+for protocol work, noisy otherwise.
+
+### `device_name` / `controller_model`
+
+The device name in Home Assistant and the model shown on its page.
+
+### `subscription_override`
+
+Advanced. A raw JSON subscription message replacing the built-in one.
 
 ---
 
-## HASS Entities
+## Entities
 
-After start, all entities appear automatically grouped under one device:
+**Engine** — engine hours, number of starts, engine speed, coolant and oil
+temperature, oil pressure, fuel level in percent and in volume, battery and
+charge alternator voltage.
 
+**Generator** — frequency, six voltages, three currents, kW / kVA / kvar per
+phase and total, power factor per phase and average.
+
+**Mains** — the same set for the mains side.
+
+**Energy** — kWh, kVAh and kvarh counters. The kWh counter carries
+`device_class: energy` and `state_class: total_increasing`, so it can be added
+to the Energy Dashboard directly.
+
+**Status** — engine, mains, load, supervisor and mode as text; engine running,
+mains available and load on generator as binary sensors.
+
+**Alarms** — a `problem` binary sensor whose attributes carry the full active
+alarm list split by severity, plus an alarm state sensor and an active count.
+
+**Digital I/O** — inputs and outputs as binary sensors, named by the controller
+itself. Renaming a function in the DSE configurator renames the entity.
+
+**Diagnostic** — earth current, load unbalance, current lag/lead, three
+maintenance countdowns and due timestamps, and the gateway's signal strength,
+RSSI, RSRQ, SINR, uptime, GSM type, Ethernet flag and GPS position.
+
+**Controls** (with `allow_control: true`) — mode select and nine buttons:
+Start, Stop, Manual, Auto, Remote start, Cancel remote start, Mute alarm,
+Reset alarms, Reset mains failure.
+
+---
+
+## Things worth knowing
+
+**Unavailable instruments stay unknown.** A controller without an oil pressure
+sender reports `----` forever, and mains power needs mains CTs to be fitted.
+That is the controller, not the bridge.
+
+**Prefer Remote start over Start** in automations. Start sends Manual → Start
+and leaves the controller in Manual; Remote start requests a start while
+leaving it in Auto, so a failed automation cannot disable the set.
+
+**Watch output polarity.** An output configured De-Energise — as Close Mains
+Output usually is — reads ON at rest, so trigger on the transition to OFF.
+
+**The session drops about every 30 minutes** and reconnects within seconds. Use
+`for: minutes: 1` on triggers.
+
+---
+
+## Adding parameters
+
+Sub keys of group 131 are DSEWebNet instrument IDs, listed in the "Instrument"
+dropdown of the chart series editor on the DSEWebNet site. Enable
+`expose_unknown`, find the ID in the log, then add a line to `PARAMS["131"]`:
+
+```python
+"305": Param("engine_run_time", "Engine hours", "h", 1.0, "duration",
+             state_class="total_increasing", precision=2, icon="mdi:timer-outline"),
 ```
-📦 DSE Generator  (Deep Sea Electronics · DSE6110 MKIII)
-├── 📊 Sensors
-│   ├── Engine State            sensor.dse_generator_engine_state
-│   ├── Mains State             sensor.dse_generator_mains_state
-│   ├── Load State              sensor.dse_generator_load_state
-│   ├── Generator Mode          sensor.dse_generator_mode_state
-│   ├── Supervisor State        sensor.dse_generator_supervisor_state
-│   ├── Oil Pressure            sensor.dse_generator_oil_pressure
-│   ├── Frequency               sensor.dse_generator_frequency
-│   ├── Voltage L1-N            sensor.dse_generator_voltage_l1_n
-│   ├── Voltage L2-N            sensor.dse_generator_voltage_l2_n
-│   ├── Voltage L3-N            sensor.dse_generator_voltage_l3_n
-│   ├── Voltage L1-L2           sensor.dse_generator_voltage_l1_l2
-│   ├── Voltage L2-L3           sensor.dse_generator_voltage_l2_l3
-│   └── Voltage L3-L1           sensor.dse_generator_voltage_l3_l1
-└── 🔘 Buttons
-    ├── Generator Start         button.generator_start
-    ├── Generator Stop          button.generator_stop
-    ├── Generator Auto          button.generator_auto
-    └── Generator Manual        button.generator_manual
-```
 
-> **Note:** The **Start** button automatically sends the Manual → Start command sequence. The DSE6110 ignores a Start command when in Stop mode, so Manual is always sent first.
+Units come from the payload and win over the table whenever the device class
+accepts them, so the unit column is only a fallback.
 
 ---
 
-## Automation example
+## Troubleshooting
 
-```yaml
-automation:
-  - alias: "Start generator on power failure"
-    trigger:
-      - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Failure"
-    action:
-      - service: button.press
-        target:
-          entity_id: button.generator_start
-
-  - alias: "Return to Auto after mains restore"
-    trigger:
-      - platform: state
-        entity_id: sensor.dse_generator_mains_state
-        to: "Mains Available"
-        for:
-          minutes: 2
-    action:
-      - service: button.press
-        target:
-          entity_id: button.generator_auto
-```
-
----
-
-## Tested on
-
-| Component | Version |
-|-----------|---------|
-| DSE controller | DSE6110 MKIII |
-| DSE gateway | DSE 0890-04 |
-| Home Assistant OS | 17.1 |
-| Home Assistant Core | 2026.2.2 |
-
----
-
-## Bug reports
-
-Found a bug? Open an issue on GitHub:
-
-**[github.com/dmdukr/hass-dsewebnet-bridge/issues](https://github.com/dmdukr/hass-dsewebnet-bridge/issues)**
-
-Please include the following in your report:
-
-| Field | Where to find |
-|-------|--------------|
-| **Add-on version** | Settings → Apps → DSEWebNet Bridge → Info tab |
-| **Home Assistant version** | Settings → System → About |
-| **Add-on logs** | Settings → Apps → DSEWebNet Bridge → Log tab — copy the full log |
-| **Description** | What happened, what you expected, steps to reproduce |
+| Symptom | Check |
+|---|---|
+| All entities unavailable | Add-on log: login errors, MQTT connection, availability lines |
+| Some sensors permanently unknown | Normal — that instrument is not fitted or not measurable now |
+| Values frozen but available | Should not happen; the watchdog marks the device unavailable after ~2 min without data |
+| Buttons missing | `allow_control` is off, or `gateway_id` / `module_id` is empty |
+| A button does nothing | Not every control key is implemented by every module |
