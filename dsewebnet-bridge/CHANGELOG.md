@@ -1,3 +1,32 @@
+## 1.1.0
+
+Generator alarms, missing measurements, and a staleness guard.
+
+### Added
+- **Generator alarm entity** (`binary_sensor`, device_class `problem`) fed from protocol
+  parameter `129` (`severityID` + text). Until now the add-on published no alarm entity at all,
+  although the cloud sends the summary on every update.
+- **Seven measurements that were already arriving and being discarded**: starter battery voltage,
+  charge alternator voltage, engine speed (RPM), coolant temperature, oil temperature, fuel level,
+  and the alarm text. Starter battery voltage matters most — it is the usual reason a standby
+  generator fails to start.
+- **Staleness watchdog.** MQTT last-will only fires when the MQTT connection itself drops.
+  If the *cloud* goes away, the broker stays up, `availability` stayed `online`, and Home Assistant
+  kept showing hours-old values as current. The add-on now publishes `offline` when no data has
+  arrived for three poll intervals (minimum 120 s). For a generator this was the worst failure
+  mode: silence looked like health.
+
+### Fixed
+- `_on_connect` ignored the MQTT return code and logged "MQTT connected" even when the broker
+  refused the connection, then subscribed into nothing.
+- Numeric parsing crashed on the controller's `"----"` (no sensor) and `"####"` (out of range)
+  placeholders. They now map to `None` instead of `0` — reporting zero would have claimed a
+  healthy sensor reading zero.
+
+### Notes
+- Protocol parameter `132` is requested in the subscription but never sent by the cloud;
+  alarms come through `129`. Captured live 2026-08-31.
+
 # Changelog
 
 ## 1.0.1

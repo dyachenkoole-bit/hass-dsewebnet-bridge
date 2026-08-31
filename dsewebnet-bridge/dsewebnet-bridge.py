@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 
 import aiohttp
 import paho.mqtt.client as mqtt
@@ -88,15 +89,26 @@ STATUS_FIELDS = {"0": "engine_state", "1": "mains_state",
 
 # param 131 sub-key → (field name, unit)
 ELEC_FIELDS = {
-    "0":  ("oil_pressure", "bar"),
-    "7":  ("frequency",    "Hz"),
-    "8":  ("voltage_l1n",  "V"),
-    "9":  ("voltage_l2n",  "V"),
-    "10": ("voltage_l3n",  "V"),
-    "11": ("voltage_l1l2", "V"),
-    "12": ("voltage_l2l3", "V"),
-    "13": ("voltage_l3l1", "V"),
+    "0":  ("oil_pressure",    "bar"),
+    "1":  ("coolant_temp",    "°C"),
+    "2":  ("oil_temp",        "°C"),
+    "3":  ("fuel_level",      "%"),
+    "4":  ("charge_voltage",  "V"),
+    "5":  ("battery_voltage", "V"),
+    "6":  ("engine_rpm",      "RPM"),
+    "7":  ("frequency",       "Hz"),
+    "8":  ("voltage_l1n",     "V"),
+    "9":  ("voltage_l2n",     "V"),
+    "10": ("voltage_l3n",     "V"),
+    "11": ("voltage_l1l2",    "V"),
+    "12": ("voltage_l2l3",    "V"),
+    "13": ("voltage_l3l1",    "V"),
 }
+
+# param 129 sub-key 0 → alarm summary: {"severityID": N, "timestamp": ..., "string": "..."}
+# severityID 0 = no alarm. This is the ONLY alarm channel the cloud sends;
+# param 132 is subscribed by the original protocol capture but never arrives.
+ALARM_SEVERITY = {0: "none", 1: "warning", 2: "shutdown", 3: "electrical trip"}
 
 # ── Runtime state ─────────────────────────────────────────────────────────
 state = {
@@ -106,7 +118,12 @@ state = {
     "frequency": 0.0,
     "voltage_l1n": 0.0,  "voltage_l2n": 0.0,  "voltage_l3n": 0.0,
     "voltage_l1l2": 0.0, "voltage_l2l3": 0.0, "voltage_l3l1": 0.0,
+    "coolant_temp": None, "oil_temp": None, "fuel_level": None,
+    "charge_voltage": 0.0, "battery_voltage": 0.0, "engine_rpm": 0,
+    "alarm_severity": 0, "alarm_text": "", "alarm_active": "OFF",
 }
+last_data_ts = 0.0        # когда в последний раз пришли данные из облака
+availability = "offline"  # что сейчас объявлено в MQTT
 mqttc = None
 _loop = None          # asyncio event loop (set in main, used for thread-safe queue puts)
 pending_cmd = asyncio.Queue()
@@ -124,6 +141,11 @@ def mqtt_setup():
     mqttc.loop_start()
 
 def _on_connect(client, userdata, flags, rc):
+    # rc != 0 = отказ (неверные креды, брокер не пускает). До 1.1.0 код писал
+    # "MQTT connected" при любом исходе и шёл подписываться в никуда.
+    if rc != 0:
+        log.error(f"MQTT connect refused, rc={rc} — проверь mqtt_user/mqtt_pass и адрес брокера")
+        return
     log.info("MQTT connected")
     client.subscribe(f"{MQTT_PREFIX}/command")
     client.publish(f"{MQTT_PREFIX}/availability", "online", retain=True)
@@ -139,6 +161,26 @@ def _on_message(client, userdata, msg):
 
 def _publish_state():
     mqttc.publish(f"{MQTT_PREFIX}/state", json.dumps(state))
+    _set_availability("online")
+
+def _set_availability(value: str):
+    """Объявляет доступность только при СМЕНЕ значения.
+    Зачем: MQTT-завещание срабатывает лишь при обрыве самого MQTT. Если отвалится ОБЛАКО,
+    брокер жив, availability остаётся online — и дом часами показывает последние значения
+    как актуальные. Для генератора это худший отказ: тишина выглядит как «всё хорошо»."""
+    global availability
+    if value != availability:
+        availability = value
+        mqttc.publish(f"{MQTT_PREFIX}/availability", value, retain=True)
+        log.warning(f"availability → {value}") if value == "offline" else log.info(f"availability → {value}")
+
+async def _staleness_watchdog():
+    """Нет данных дольше трёх интервалов опроса (но не меньше 120 с) → объявляем offline."""
+    limit = max(3 * POLL_INTERVAL, 120)
+    while True:
+        await asyncio.sleep(15)
+        if last_data_ts and (time.time() - last_data_ts) > limit:
+            _set_availability("offline")
 
 def _publish_discovery(client):
     device = {
@@ -164,6 +206,13 @@ def _publish_discovery(client):
         ("voltage_l1l2",     "Gen Voltage L1-L2",  "voltage",   "V",    "mdi:lightning-bolt"),
         ("voltage_l2l3",     "Gen Voltage L2-L3",  "voltage",   "V",    "mdi:lightning-bolt"),
         ("voltage_l3l1",     "Gen Voltage L3-L1",  "voltage",   "V",    "mdi:lightning-bolt"),
+        ("battery_voltage",  "Starter Battery",    "voltage",   "V",    "mdi:car-battery"),
+        ("charge_voltage",   "Charge Alternator",  "voltage",   "V",    "mdi:current-dc"),
+        ("engine_rpm",       "Engine Speed",       None,        "RPM",  "mdi:speedometer"),
+        ("coolant_temp",     "Coolant Temp",       "temperature","°C",  "mdi:coolant-temperature"),
+        ("oil_temp",         "Oil Temp",           "temperature","°C",  "mdi:oil-temperature"),
+        ("fuel_level",       "Fuel Level",         None,        "%",    "mdi:fuel"),
+        ("alarm_text",       "Alarm Text",         None,        None,   "mdi:alert-circle-outline"),
     ]
     for uid, name, dc, unit, icon in sensors:
         cfg = {
@@ -179,6 +228,23 @@ def _publish_discovery(client):
         if unit: cfg["unit_of_measurement"] = unit
         client.publish(f"{HASS_PREFIX}/sensor/dse_{MODULE_ID}/{uid}/config",
                        json.dumps(cfg), retain=True)
+
+    # Авария генератора отдельной сущностью: до 1.1.0 мост не публиковал НИ ОДНОГО флага,
+    # хотя облако шлёт сводку в параметре 129.
+    client.publish(
+        f"{HASS_PREFIX}/binary_sensor/dse_{MODULE_ID}/alarm/config",
+        json.dumps({
+            "unique_id": f"dse_{MODULE_ID}_alarm_active",
+            "name": "Generator Alarm",
+            "state_topic": state_topic,
+            "value_template": "{{ value_json.alarm_active }}",
+            "json_attributes_topic": state_topic,
+            "json_attributes_template": '{"severity": {{ value_json.alarm_severity }}, "text": "{{ value_json.alarm_text }}"}',
+            "payload_on": "ON", "payload_off": "OFF",
+            "device_class": "problem",
+            "availability_topic": avail,
+            "device": device,
+        }), retain=True)
 
     for cmd_name in CMD:
         cfg = {
@@ -196,7 +262,18 @@ def _publish_discovery(client):
     log.info("HASS discovery published")
 
 # ── Message parsing ───────────────────────────────────────────────────────
+def _safe_num(v):
+    """Число или None. Контроллер шлёт "----" (нет датчика) и "####" (вне диапазона) —
+    float() на них даёт  ValueError и роняет разбор всего сообщения (до 1.1.0 это был
+    путь к обрыву WS-сессии, стоило добавить любое из полей 1/2/3)."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
 def _handle_ws_message(raw: str):
+    global last_data_ts
+    last_data_ts = time.time()
     try:
         msg = json.loads(raw)
     except Exception:
@@ -229,16 +306,35 @@ def _handle_ws_message(raw: str):
         for key, (field, _) in ELEC_FIELDS.items():
             if key in mod_data["131"]:
                 val = mod_data["131"][key]
-                if isinstance(val, dict):
-                    state[field] = round(float(val.get("value", 0)), 1)
+                raw = val.get("value") if isinstance(val, dict) else val
+                num = _safe_num(raw)
+                if num is None:
+                    # Контроллер шлёт "----" (датчика нет) и "####" (вне диапазона).
+                    # Это НЕ ноль: ноль соврал бы про исправный датчик с нулевым значением.
+                    state[field] = None
+                elif isinstance(val, dict):
+                    state[field] = round(num, 1)
                 else:
-                    state[field] = round(float(val) * 0.1, 1)
+                    state[field] = round(num * 0.1, 1)
                 changed = True
+
+    # param 129 – сводка аварий. Единственный канал аварий, который шлёт облако:
+    # {"severityID": N, "timestamp": ..., "string": "текст"}. 0 = аварий нет.
+    if "129" in mod_data:
+        a = mod_data["129"].get("0")
+        if isinstance(a, dict):
+            sev = int(_safe_num(a.get("severityID", 0)) or 0)
+            state["alarm_severity"] = sev
+            state["alarm_text"] = a.get("string", "") or ALARM_SEVERITY.get(sev, "")
+            state["alarm_active"] = "ON" if sev > 0 else "OFF"
+            changed = True
 
     if changed:
         _publish_state()
         log.info(f"engine={state['engine_state']} mode={state['mode_state']} "
-                 f"oil={state['oil_pressure']}bar L1={state['voltage_l1n']}V freq={state['frequency']}Hz")
+                 f"oil={state['oil_pressure']}bar L1={state['voltage_l1n']}V "
+                 f"freq={state['frequency']}Hz bat={state['battery_voltage']}V "
+                 f"rpm={state['engine_rpm']} alarm={state['alarm_severity']}")
 
 # ── WebSocket loop ────────────────────────────────────────────────────────
 async def _send(ws, cmd_id: int, label: str = ""):
@@ -322,9 +418,11 @@ async def main():
     print("\n" * 80, end="", flush=True)
     mqtt_setup()
     await asyncio.sleep(1)
+    watchdog = asyncio.create_task(_staleness_watchdog())
     try:
         await ws_loop()
     finally:
+        watchdog.cancel()
         mqttc.publish(f"{MQTT_PREFIX}/availability", "offline", retain=True)
         mqttc.loop_stop()
         mqttc.disconnect()
