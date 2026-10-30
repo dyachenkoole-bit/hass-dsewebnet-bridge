@@ -5,6 +5,13 @@ DSEWebNet -> MQTT bridge for Home Assistant.
 Connects to the DSEWebNet cloud via WebSocket and republishes DSE generator
 data to MQTT with Home Assistant auto-discovery.
 
+Full history: CHANGELOG.md.
+
+v2.1.2
+  * login reads the form from the page (DSEWebNet site rebuilt, Oct 2026):
+    hidden CSRF fields are sent back, field names are not hard-coded
+  * 30 s login timeout, browser-like headers, clearer login error logging
+
 v1.1.1
   * parameters 131/1..6 identified from the DSE GenComm Page 4 layout
   * GenComm sentinel values (out of range / sensor fault / not measurable)
@@ -41,7 +48,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────

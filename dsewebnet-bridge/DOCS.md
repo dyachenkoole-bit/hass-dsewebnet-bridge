@@ -128,6 +128,9 @@ Output usually is — reads ON at rest, so trigger on the transition to OFF.
 **The session drops about every 30 minutes** and reconnects within seconds. Use
 `for: minutes: 1` on triggers.
 
+**Gateway firmware V4.3.2 or newer is required** since DSEWebNet moved hosting
+in October 2026. MKI gateways (0890-01 / 0891-01) can no longer connect.
+
 ---
 
 ## Adding parameters
@@ -151,6 +154,9 @@ accepts them, so the unit column is only a fallback.
 | Symptom | Check |
 |---|---|
 | All entities unavailable | Add-on log: login errors, MQTT connection, availability lines |
+| `Login failed - HTTP 200, landed on …/login.php` | Update the add-on to 2.1.2 or later (login form changed in Oct 2026). If it persists, the log line `Form fields sent` shows what was submitted |
+| Login OK but portal shows "No connection with ID …" | The gateway is offline: firmware below V4.3.2, or after a reset its WebNet Connection Method is None / default gateway is 192.168.1.253. Fix on the gateway's web page and press **Save Config** |
+| `Session error: 503` on `wss://…/user` | DSEWebNet realtime service is down; the add-on keeps retrying |
 | Some sensors permanently unknown | Normal — that instrument is not fitted or not measurable now |
 | Values frozen but available | Should not happen; the watchdog marks the device unavailable after ~2 min without data |
 | Buttons missing | `allow_control` is off, or `gateway_id` / `module_id` is empty |

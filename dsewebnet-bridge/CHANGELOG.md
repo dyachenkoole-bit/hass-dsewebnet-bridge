@@ -15,6 +15,16 @@ login stopped working (HTTP 200, back on login.php).
   exception type is logged, so a hanging server no longer shows as an empty
   `Login error:`.
 - A failed login logs the field names sent and any error text from the page.
+- `VERSION` in the script (shown in the log and in the device info) now
+  matches the add-on version; it was still 2.1.1.
+
+### Docs
+- README / DOCS: gateway firmware must be V4.3.2+ after the October 2026
+  DSEWebNet hosting move; MKI gateways are no longer supported.
+- Gateway settings are kept only after **Save Config**; a reset can leave the
+  WebNet Connection Method at None and the default gateway at 192.168.1.253.
+- Troubleshooting rows for the new login failure, "No connection with ID" and
+  the realtime 503.
 
 ## 2.1.1
 
