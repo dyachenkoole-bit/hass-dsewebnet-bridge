@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.3
+  * cookies with attributes Python cannot parse (Partitioned) are re-added,
+    so the DSEWebNet session survives the login
+
 v2.1.2
   * login reads the form from the page (DSEWebNet site rebuilt, Oct 2026):
     hidden CSRF fields are sent back, field names are not hard-coded
@@ -48,7 +52,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -1357,6 +1361,26 @@ def _build_login(html: str, page_url: str) -> tuple[str, dict]:
     return action, data
 
 
+def _absorb_cookies(session: aiohttp.ClientSession, resp: aiohttp.ClientResponse):
+    """Python's cookie parser silently drops a whole cookie when it carries an
+    attribute it does not know (e.g. `Partitioned`, Python < 3.14). DSEWebNet
+    started sending such cookies in Oct 2026, so the PHP session was lost and
+    the CSRF check failed. Re-add any cookie the jar rejected by name/value."""
+    for r in [*resp.history, resp]:
+        have = session.cookie_jar.filter_cookies(r.url)
+        for raw in r.headers.getall("Set-Cookie", []):
+            first, _, rest = raw.partition(";")
+            name, eq, value = first.partition("=")
+            name = name.strip()
+            if not eq or not name:
+                continue
+            attrs = [a.strip().split("=", 1)[0] for a in rest.split(";") if a.strip()]
+            log.debug(f"Set-Cookie {r.url.path}: {name} attrs={attrs}")
+            if name not in have and value.strip().lower() != "deleted":
+                session.cookie_jar.update_cookies({name: value.strip()}, r.url)
+                log.debug(f"Cookie {name} was rejected by the parser - added manually")
+
+
 async def _login(session: aiohttp.ClientSession) -> bool:
     try:
         session.cookie_jar.clear()      # stale session cookies break a fresh login
@@ -1364,6 +1388,7 @@ async def _login(session: aiohttp.ClientSession) -> bool:
                                timeout=LOGIN_TIMEOUT) as resp:
             html = await resp.text()
             page_url = str(resp.url)
+            _absorb_cookies(session, resp)
         action, data = _build_login(html, page_url)
 
         headers = dict(_BROWSER_HEADERS,
@@ -1371,6 +1396,7 @@ async def _login(session: aiohttp.ClientSession) -> bool:
         async with session.post(action, data=data, headers=headers,
                                 allow_redirects=True, timeout=LOGIN_TIMEOUT) as resp:
             body = await resp.text()
+            _absorb_cookies(session, resp)
             cookies = session.cookie_jar.filter_cookies(yarl.URL("https://www.dsewebnet.com"))
             still_login = 'type="password"' in body or "login" in resp.url.path.lower()
             if not still_login or "sessionKey" in cookies:

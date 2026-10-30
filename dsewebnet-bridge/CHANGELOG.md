@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.3
+
+2.1.2 found and submitted the login form correctly, but the login still landed
+back on login.php and no session cookie appeared in the jar.
+
+### Fixed
+- **Session cookie lost on parse.** Python's `http.cookies` (used by aiohttp)
+  silently drops a cookie that carries an attribute it does not know, such as
+  `Partitioned` (supported only from Python 3.14). Any `Set-Cookie` the jar
+  rejected is now re-added by name and value, including cookies set during
+  redirects.
+- Debug log lists every `Set-Cookie` name with its attributes (values are not
+  logged), to diagnose future login changes.
+
 ## 2.1.2
 
 DSEWebNet rebuilt its site after the October 2026 security shutdown and the old
