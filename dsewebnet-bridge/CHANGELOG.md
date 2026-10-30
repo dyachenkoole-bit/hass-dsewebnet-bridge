@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.5
+
+### Fixed
+- **Failed logins locked the DSEWebNet account.** A rejected login went through
+  the normal reconnect backoff (5 s, doubling), so a wrong password or a
+  changed login flow produced dozens of attempts within minutes and DSEWebNet
+  answered "Maximum number of login attempts exceeded". A rejected login is now
+  retried after 10 min, then 30 min, then hourly; the lockout message is
+  detected and the next attempt is an hour later. Network errors keep the
+  short backoff.
+
 ## 2.1.4
 
 Diagnostic release. 2.1.3 confirmed the server sets only Imperva cookies and no
