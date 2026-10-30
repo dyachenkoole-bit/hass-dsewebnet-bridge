@@ -117,6 +117,12 @@ Additional keys are accepted on the command topic without a button, because they
 
 **The DSEWebNet session drops roughly every 30 minutes** and reconnects within seconds. Entities go unavailable briefly, so use `for: minutes: 1` on triggers to avoid false positives.
 
+**Gateway firmware must be V4.3.2 or newer** (V4.6.x current). Since DSEWebNet moved hosting in October 2026, older 0890-04 / 0891-04 firmware can no longer connect, and the portal shows "No connection with ID …". MKI gateways (0890-01 / 0891-01) are no longer supported and must be replaced. Update via the gateway's web page (File System → Firmware Upgrade) or from a FAT USB stick.
+
+**After a gateway update or format, check its settings.** Settings changed in the gateway's web page are kept only after **Save Config**; Apply alone is lost on reboot. A reset can also leave the WebNet *Connection Method* at **None** and the default gateway at 192.168.1.253 — the gateway then shows "DNS START" and never registers.
+
+**Add-on 2.1.2 is required after the October 2026 DSEWebNet rebuild.** Older versions log `Login failed - HTTP 200, landed on …/login.php` because the login form changed.
+
 ---
 
 ## Automation examples
@@ -184,7 +190,8 @@ Units come from the payload and override the table when the device class accepts
 | Component | Version |
 |-----------|---------|
 | DSE controller | DSE4520 MKII |
-| DSE gateway | DSE890 MKII |
+| DSE gateway | DSE890 MKII, firmware 4.6.5 |
+| Add-on | 2.1.2 |
 | Home Assistant OS | 17.1 |
 | Home Assistant Core | 2026.2.2 |
 
@@ -268,6 +275,12 @@ The original was developed against a DSE6110 MKIII with a DSE 0890-04 gateway.
 
 **Сесія DSEWebNet рветься приблизно кожні 30 хвилин** і відновлюється за секунди. Сутності ненадовго стають недоступними, тому в тригерах став `for: minutes: 1`.
 
+**Прошивка шлюза має бути V4.3.2 або новіша** (актуальна V4.6.x). Після переїзду DSEWebNet на новий хостинг у жовтні 2026 шлюзи 0890-04 / 0891-04 зі старою прошивкою не підключаються, а портал пише «Немає зв'язку з ID …». Шлюзи MKI (0890-01 / 0891-01) більше не підтримуються, їх треба замінити. Оновлення — у веб-інтерфейсі шлюза (Файлова система → Оновлення прошивки) або з флешки FAT.
+
+**Після оновлення чи форматування шлюза перевірте його налаштування.** Зміни у веб-інтерфейсі шлюза зберігаються лише після **Save Config** («Зберегти конфігурацію»); саме «Застосувати» скидається після перезавантаження. Скидання також може лишити *Connection Method* для WebNet у стані **None**, а шлюз за замовчуванням 192.168.1.253 — тоді шлюз показує «DNS START» і не реєструється.
+
+**Після перебудови DSEWebNet у жовтні 2026 потрібен додаток 2.1.2.** Старіші версії пишуть у лог `Login failed - HTTP 200, landed on …/login.php`, бо змінилась форма входу.
+
 ---
 
 ## Протестовано на
@@ -275,7 +288,8 @@ The original was developed against a DSE6110 MKIII with a DSE 0890-04 gateway.
 | Компонент | Версія |
 |-----------|--------|
 | Контролер DSE | DSE4520 MKII |
-| Шлюз DSE | DSE890 MKII |
+| Шлюз DSE | DSE890 MKII, прошивка 4.6.5 |
+| Додаток | 2.1.2 |
 | Home Assistant OS | 17.1 |
 | Home Assistant Core | 2026.2.2 |
 
