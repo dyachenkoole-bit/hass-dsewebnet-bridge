@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.4
+
+Diagnostic release. 2.1.3 confirmed the server sets only Imperva cookies and no
+session cookie, so the cookie theory was wrong; the login is rejected for a
+reason the page states but the log did not show.
+
+### Added
+- On a failed login the log shows the visible text of the returned page,
+  any captcha / bot-protection markers (reCAPTCHA, hCaptcha, Turnstile,
+  Imperva), and at debug level the login form HTML with long values elided.
+
 ## 2.1.3
 
 2.1.2 found and submitted the login form correctly, but the login still landed
