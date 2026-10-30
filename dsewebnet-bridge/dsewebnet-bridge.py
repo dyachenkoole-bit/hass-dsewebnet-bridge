@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.5
+  * failed login is retried after 10 min, 30 min, then hourly (was 5 s+);
+    the DSEWebNet lockout message is detected and waits an hour
+
 v2.1.4
   * failed login logs the page text, captcha / bot-protection markers and the
     login form HTML (long values elided)
@@ -56,7 +60,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.4"
+VERSION = "2.1.5"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -119,6 +123,12 @@ MQTT_PREFIX = MQTT_TOPIC or f"dse/{MODULE_ID.lower() if MODULE_ID else 'generato
 
 RECONNECT_BASE = 5          # seconds, doubled on every consecutive failure
 RECONNECT_MAX = 300
+# A rejected login must not be retried quickly: DSEWebNet locks the account
+# after a handful of failed attempts ("Maximum number of login attempts").
+LOGIN_FAIL_DELAYS = (600, 1800, 3600)   # 10 min, 30 min, then hourly
+LOGIN_LOCKOUT_DELAY = 3600
+_LOCKOUT_RE = re.compile(r"maximum number of login attempts|too many (?:login )?attempts|"
+                         r"account (?:is )?locked", re.I)
 STALE_FACTOR = 3            # data older than STALE_FACTOR * POLL_INTERVAL -> unavailable
 STALE_MIN = 120
 WS_HEARTBEAT = 20           # seconds between WebSocket pings
@@ -1403,7 +1413,12 @@ def _form_html(html: str) -> str:
     return re.sub(r"\s+", " ", form)[:1500]
 
 
+_login_locked = False
+
+
 async def _login(session: aiohttp.ClientSession) -> bool:
+    global _login_locked
+    _login_locked = False
     try:
         session.cookie_jar.clear()      # stale session cookies break a fresh login
         async with session.get(DSE_LOGIN_URL, headers=_BROWSER_HEADERS,
@@ -1424,6 +1439,8 @@ async def _login(session: aiohttp.ClientSession) -> bool:
             if not still_login or "sessionKey" in cookies:
                 log.info("Login OK")
                 return True
+            if _LOCKOUT_RE.search(body):
+                _login_locked = True
             log.error(f"Login page after POST: {_page_text(body)}")
             marks = [m for m in _BOT_MARKERS if m.lower() in body.lower()]
             if marks:
@@ -1490,11 +1507,32 @@ async def _session_tasks(ws):
 async def ws_loop():
     global _ws_ok, _last_data_ts
     attempt = 0
+    login_fails = 0
     async with aiohttp.ClientSession() as session:
         while _stop_event is None or not _stop_event.is_set():
             try:
                 if not await _login(session):
-                    raise RuntimeError("login failed")
+                    login_fails += 1
+                    _ws_ok = False
+                    _set_available(False, "login failed")
+                    if _login_locked:
+                        delay = LOGIN_LOCKOUT_DELAY
+                        log.error("DSEWebNet reports too many login attempts - the account is "
+                                  "temporarily locked. Check the password in a browser; "
+                                  f"next attempt in {delay // 60} min")
+                    else:
+                        delay = LOGIN_FAIL_DELAYS[min(login_fails, len(LOGIN_FAIL_DELAYS)) - 1]
+                        log.error(f"Login rejected ({login_fails} in a row) - check dse_username / "
+                                  f"dse_password; next attempt in {delay // 60} min")
+                    try:
+                        if _stop_event is not None:
+                            await asyncio.wait_for(_stop_event.wait(), timeout=delay)
+                            return
+                        await asyncio.sleep(delay)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                login_fails = 0
 
                 async with session.ws_connect(
                     DSE_WS_URL,
