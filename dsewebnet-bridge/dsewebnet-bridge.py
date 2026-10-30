@@ -33,6 +33,8 @@ import re
 import signal
 import time
 from dataclasses import dataclass
+from html.parser import HTMLParser
+from urllib.parse import urljoin
 from datetime import datetime, timezone
 
 import aiohttp
@@ -1280,35 +1282,101 @@ def _handle_ws_message(raw: str):
 
 
 # ── DSEWebNet session ─────────────────────────────────────────────────────
+_BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+}
+LOGIN_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+class _FormParser(HTMLParser):
+    """Collects every <form> with its inputs, so the login does not depend on
+    hard-coded field names (DSEWebNet renamed them after the 2026-10 rebuild)."""
+
+    def __init__(self):
+        super().__init__()
+        self.forms: list[dict] = []
+        self._cur: dict | None = None
+
+    def handle_starttag(self, tag, attrs):
+        a = {k.lower(): (v or "") for k, v in attrs}
+        if tag == "form":
+            self._cur = {"action": a.get("action", ""),
+                         "method": a.get("method", "post").lower(), "fields": []}
+            self.forms.append(self._cur)
+        elif tag in ("input", "button") and self._cur is not None:
+            t = a.get("type", "text" if tag == "input" else "submit").lower()
+            if a.get("name"):
+                self._cur["fields"].append({"name": a["name"], "type": t,
+                                            "value": a.get("value", "")})
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self._cur = None
+
+
+def _build_login(html: str, page_url: str) -> tuple[str, dict]:
+    parser = _FormParser()
+    parser.feed(html)
+    form = next((f for f in parser.forms
+                 if any(x["type"] == "password" for x in f["fields"])), None)
+    if form is None:
+        log.warning("Login form not found on the page - using legacy field names")
+        return DSE_LOGIN_URL, {"login[username]": DSE_USERNAME,
+                               "login[password]": DSE_PASSWORD,
+                               "login[btnLogin]": "Login"}
+
+    data: dict[str, str] = {}
+    user_set = submit_set = False
+    for f in form["fields"]:
+        n, t, v = f["name"], f["type"], f["value"]
+        if t == "password":
+            data[n] = DSE_PASSWORD
+        elif t in ("text", "email") and not user_set:
+            data[n] = DSE_USERNAME
+            user_set = True
+        elif t == "submit":
+            if not submit_set:          # browsers send only the clicked button
+                data[n] = v or "Login"
+                submit_set = True
+        elif t in ("checkbox", "radio"):
+            continue
+        else:                           # hidden: CSRF tokens, nonces, etc.
+            data[n] = v
+    action = urljoin(page_url, form["action"]) if form["action"] else page_url
+    log.debug(f"Login form: action={action} fields={list(data)}")
+    return action, data
+
+
 async def _login(session: aiohttp.ClientSession) -> bool:
     try:
-        async with session.get(DSE_LOGIN_URL) as resp:
+        session.cookie_jar.clear()      # stale session cookies break a fresh login
+        async with session.get(DSE_LOGIN_URL, headers=_BROWSER_HEADERS,
+                               timeout=LOGIN_TIMEOUT) as resp:
             html = await resp.text()
-        csrf_id = re.search(r'name="login\[_csrfID\]"\s+value="([^"]+)"', html)
-        csrf_key = re.search(r'name="login\[_csrfKey\]"\s+value="([^"]+)"', html)
-        if not csrf_id or not csrf_key:
-            log.debug("CSRF token not found on the login page - continuing anyway")
-        data = {
-            "login[username]": DSE_USERNAME,
-            "login[password]": DSE_PASSWORD,
-            "login[btnLogin]": "Login",
-        }
-        if csrf_id:
-            data["login[_csrfID]"] = csrf_id.group(1)
-        if csrf_key:
-            data["login[_csrfKey]"] = csrf_key.group(1)
+            page_url = str(resp.url)
+        action, data = _build_login(html, page_url)
 
-        async with session.post(DSE_LOGIN_URL, data=data, allow_redirects=True) as resp:
+        headers = dict(_BROWSER_HEADERS,
+                       Origin="https://www.dsewebnet.com", Referer=page_url)
+        async with session.post(action, data=data, headers=headers,
+                                allow_redirects=True, timeout=LOGIN_TIMEOUT) as resp:
             body = await resp.text()
             cookies = session.cookie_jar.filter_cookies(yarl.URL("https://www.dsewebnet.com"))
-            if "sessionKey" in cookies or "login" not in str(resp.url):
+            still_login = 'type="password"' in body or "login" in resp.url.path.lower()
+            if not still_login or "sessionKey" in cookies:
                 log.info("Login OK")
                 return True
-            log.error(f"Login failed - HTTP {resp.status}, landed on {resp.url}")
-            log.debug(f"Login response snippet: {body[:400]}")
+            msg = re.search(r'class="[^"]*(?:error|alert|warning)[^"]*"[^>]*>\s*([^<]{3,200})',
+                            body, re.I)
+            log.error(f"Login failed - HTTP {resp.status}, landed on {resp.url}"
+                      + (f" - page says: {msg.group(1).strip()}" if msg else ""))
+            log.error(f"Form fields sent: {list(data)}; cookies: {list(cookies)}")
             return False
     except Exception as exc:
-        log.error(f"Login error: {exc}")
+        log.error(f"Login error: {type(exc).__name__}: {exc!r}")
         return False
 
 

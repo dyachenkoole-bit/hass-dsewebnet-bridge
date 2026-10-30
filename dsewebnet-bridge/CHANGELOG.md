@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.2
+
+DSEWebNet rebuilt its site after the October 2026 security shutdown and the old
+login stopped working (HTTP 200, back on login.php).
+
+### Fixed
+- **Login reads the form from the page** instead of assuming field names: all
+  hidden fields (CSRF tokens, nonces) are sent back, the username/password
+  fields are found by type, the form action is honoured.
+- Cookie jar is cleared before each login; browser-like User-Agent, Origin and
+  Referer headers are sent.
+- 30 s timeout on login requests (was the 300 s aiohttp default), and the
+  exception type is logged, so a hanging server no longer shows as an empty
+  `Login error:`.
+- A failed login logs the field names sent and any error text from the page.
+
 ## 2.1.1
 
 Documentation release. README and DOCS rewritten for the current entity set —
