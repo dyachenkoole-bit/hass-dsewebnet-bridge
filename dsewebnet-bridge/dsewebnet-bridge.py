@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.4
+  * failed login logs the page text, captcha / bot-protection markers and the
+    login form HTML (long values elided)
+
 v2.1.3
   * cookies with attributes Python cannot parse (Partitioned) are re-added,
     so the DSEWebNet session survives the login
@@ -52,7 +56,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -1381,6 +1385,24 @@ def _absorb_cookies(session: aiohttp.ClientSession, resp: aiohttp.ClientResponse
                 log.debug(f"Cookie {name} was rejected by the parser - added manually")
 
 
+_BOT_MARKERS = ("recaptcha", "hcaptcha", "turnstile", "captcha", "_Incapsula_Resource",
+                "Incapsula incident", "Request unsuccessful", "Access Denied")
+
+
+def _page_text(html: str, limit: int = 900) -> str:
+    html = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _form_html(html: str) -> str:
+    m = re.search(r"(?is)<form[^>]*>.*?</form>", html)
+    if not m:
+        return ""
+    form = re.sub(r'(?i)(value\s*=\s*")[^"]{12,}(")', r"\1…\2", m.group(0))
+    return re.sub(r"\s+", " ", form)[:1500]
+
+
 async def _login(session: aiohttp.ClientSession) -> bool:
     try:
         session.cookie_jar.clear()      # stale session cookies break a fresh login
@@ -1402,6 +1424,11 @@ async def _login(session: aiohttp.ClientSession) -> bool:
             if not still_login or "sessionKey" in cookies:
                 log.info("Login OK")
                 return True
+            log.error(f"Login page after POST: {_page_text(body)}")
+            marks = [m for m in _BOT_MARKERS if m.lower() in body.lower()]
+            if marks:
+                log.error(f"Bot protection / captcha markers on the page: {marks}")
+            log.debug(f"Login form HTML (GET): {_form_html(html)}")
             msg = re.search(r'class="[^"]*(?:error|alert|warning)[^"]*"[^>]*>\s*([^<]{3,200})',
                             body, re.I)
             log.error(f"Login failed - HTTP {resp.status}, landed on {resp.url}"
