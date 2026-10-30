@@ -154,7 +154,7 @@ accepts them, so the unit column is only a fallback.
 | Symptom | Check |
 |---|---|
 | All entities unavailable | Add-on log: login errors, MQTT connection, availability lines |
-| `Login failed - HTTP 200, landed on …/login.php` | Update the add-on to 2.1.2 or later (login form changed in Oct 2026). If it persists, the log line `Form fields sent` shows what was submitted |
+| `Login failed - HTTP 200, landed on …/login.php` | Update the add-on to 2.1.3 or later (login form changed in Oct 2026). If it persists, the log line `Form fields sent` shows what was submitted |
 | Login OK but portal shows "No connection with ID …" | The gateway is offline: firmware below V4.3.2, or after a reset its WebNet Connection Method is None / default gateway is 192.168.1.253. Fix on the gateway's web page and press **Save Config** |
 | `Session error: 503` on `wss://…/user` | DSEWebNet realtime service is down; the add-on keeps retrying |
 | Some sensors permanently unknown | Normal — that instrument is not fitted or not measurable now |
