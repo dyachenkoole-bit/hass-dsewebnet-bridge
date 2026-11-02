@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.7
+  * explicit index lists for every group; firmware 4.6.x drops the session
+    on 65535 or unknown indexes (verified group by group on a live gateway)
+
 v2.1.6
   * group 131 requests only catalogue instruments; the 0-63 padding made
     gateway firmware 4.6.x drop the realtime session (module "offline")
@@ -64,7 +68,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.6"
+VERSION = "2.1.7"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -507,30 +511,25 @@ def _default_subscription() -> dict:
     # 65535 is not a wildcard. Groups 129 and the gateway data blocks answer to
     # it with a single composite object; groups 130/131/132 need explicit index
     # lists. Asking 130/131 for 65535 returns nothing at all.
+    # Gateway firmware 4.6.x (mandatory since October 2026) drops the whole
+    # realtime session - "Webnet: RT Rx error Cmd: 3" in the gateway log, the
+    # module shown offline - as soon as it is asked for an index the module
+    # does not have, or for 65535 on the I/O and status groups. Every list
+    # below holds only indexes a DSE4520 MKII actually answers, found one
+    # group at a time against a live gateway. Other controllers can set
+    # subscription_override.
     modules = {
-        "129": [65535] + list(range(0, 32)),
-        "130": list(range(0, 16)),
-        # Explicit catalogue IDs. They are sparse and reach past 1000, so a
-        # contiguous range cannot cover them.
-        # IDs 500-516 are the Tier 4 aftertreatment and CAN lamp block (DPF,
-        # DEF, SCR). A 4510/4520 has none of it and answers "####" to every
-        # one of them, so they are left out rather than published as 17
-        # permanently unknown entities.
-        # Only IDs from the module's instrument catalogue. Gateway firmware
-        # 4.6.x aborts the whole realtime session ("RT Rx error Cmd: 3") when
-        # asked for an instrument the module does not have, and DSEWebNet
-        # then reports the module offline. The old 0-63 padding requested 16
-        # such IDs on a DSE4520 MKII (35, 48-63).
-        "131": sorted({int(k) for k in PARAMS["131"]}),
-        "132": [65535] + list(range(0, 16)),
+        "129": [65535],                                 # alarm list
+        "130": [0, 1, 2, 3, 4],                         # engine/mains/load/supervisor/mode
+        "131": sorted({int(k) for k in PARAMS["131"]}), # instrument catalogue
+        "132": [8, 9, 11],
+        "133": [0, 1, 2, 3],                            # digital inputs A-D
+        "134": [0, 1, 2, 3, 4, 5],                      # digital outputs A-F
+        "136": [1],                                     # module comms status
     }
-    modules["133"] = [65535] + list(range(0, 16))   # digital inputs
-    modules["134"] = [65535] + list(range(0, 16))   # digital outputs
-    modules["136"] = [65535] + list(range(0, 16))
-    # data3 is the gateway's GPS fix. data7 is a rolling firmware debug log —
-    # a long array of strings that is of no use as an entity, so it is not
-    # requested and is skipped if it arrives anyway.
-    data = {"3": [65535], "5": [65535], "8": [65535]}
+    # data3 (GPS) is not requested: no fix without an antenna. data7 is a
+    # rolling firmware debug log of no use as an entity.
+    data = {"5": [65535], "8": [65535]}
 
     if PROBE_GROUPS:
         # Groups 129-132 came from one page of the DSEWebNet interface and carry
