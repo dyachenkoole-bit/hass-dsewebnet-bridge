@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.8
+
+### Fixed
+- **Frozen values while the module was offline.** When DSEWebNet loses the
+  controller it keeps sending gateway blocks (data 5/8) and group 136 reports
+  `"offline"`. Those frames reset the stale-data watchdog, so every entity
+  stayed available with its last value. Only controller data now counts as
+  fresh; after the stale timeout the device goes unavailable, which lets a
+  second data path (e.g. the gateway's own MQTT) take over in Home Assistant.
+  The first `offline` report and the recovery are logged.
+
 ## 2.1.7
 
 ### Fixed

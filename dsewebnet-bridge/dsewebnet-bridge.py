@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.8
+  * entities go unavailable when DSEWebNet reports the module offline:
+    gateway-only frames no longer count as fresh data
+
 v2.1.7
   * explicit index lists for every group; firmware 4.6.x drops the session
     on 65535 or unknown indexes (verified group by group on a live gateway)
@@ -68,7 +72,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.7"
+VERSION = "2.1.8"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -588,6 +592,14 @@ _refresh_now = asyncio.Event()
 _stop_event: asyncio.Event | None = None
 
 _ws_ok = False
+_module_offline_logged = False
+
+
+def _set_module_offline_logged(flag: bool):
+    global _module_offline_logged
+    _module_offline_logged = flag
+
+
 _available: bool | None = None
 _last_data_ts = 0.0
 
@@ -1202,6 +1214,11 @@ def _handle_ws_message(raw: str):
         return
 
     changed = False
+    # Only data from the controller itself counts as "alive". Gateway blocks
+    # (data5/data8) keep arriving every few seconds even when DSEWebNet has
+    # lost the module, and group 136 then reports "offline"; counting those
+    # kept the entities available with frozen values.
+    got_module = False
 
     # Group 129 carries the alarm block. Try the documented page-154 packed
     # format first; anything else falls through to the normal path.
@@ -1214,6 +1231,7 @@ def _handle_ws_message(raw: str):
             if _apply_alarms(decoded):
                 changed = True
             alarm_handled = True
+            got_module = True
         else:
             alarm_handled = False
             if "129" not in _alarm_shape_logged:
@@ -1231,8 +1249,16 @@ def _handle_ws_message(raw: str):
             if result is not None:
                 io_handled.add(io_group)
                 changed = changed or result
+                got_module = True
 
     for group, sub, raw_val in _iter_updates(msg["2"]):
+        if not group.startswith("data"):
+            if raw_val == "offline":
+                if not _module_offline_logged:
+                    log.warning(f"DSEWebNet reports the module offline ({group}/{sub})")
+                    _set_module_offline_logged(True)
+            else:
+                got_module = True
         if group == "129" and alarm_handled:
             continue
         if group in io_handled:
@@ -1299,7 +1325,11 @@ def _handle_ws_message(raw: str):
                 changed = True
             state[field] = val
 
-    _last_data_ts = time.time()
+    if got_module:
+        _last_data_ts = time.time()
+        if _module_offline_logged:
+            log.info("Module data received again")
+            _set_module_offline_logged(False)
     if not _ws_ok:
         return
 
