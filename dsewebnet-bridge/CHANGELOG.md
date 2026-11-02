@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.1.6
+
+### Fixed
+- **Module shown offline while the add-on is connected.** With the add-on
+  running, the gateway log repeated `Webnet: RT Rx error Cmd: 3 Index: 236` /
+  `Webnet Server Close request` every 5 s and DSEWebNet reported the module
+  offline; with the add-on stopped the portal worked. Gateway firmware 4.6.x
+  (required since October 2026) aborts the realtime session when asked for an
+  instrument the module does not have. Group 131 was padded with IDs 0-63 to
+  discover unknown instruments; on a DSE4520 MKII sixteen of them (35, 48-63)
+  are not in the module's catalogue. Group 131 now requests only the
+  catalogued instruments.
+- `probe_groups` defaulted to on in the script when the option was missing,
+  although `config.yaml` declares it off. The script default is now off too.
+
 ## 2.1.5
 
 ### Fixed

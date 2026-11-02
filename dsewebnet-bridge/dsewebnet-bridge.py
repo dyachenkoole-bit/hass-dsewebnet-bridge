@@ -7,6 +7,10 @@ data to MQTT with Home Assistant auto-discovery.
 
 Full history: CHANGELOG.md.
 
+v2.1.6
+  * group 131 requests only catalogue instruments; the 0-63 padding made
+    gateway firmware 4.6.x drop the realtime session (module "offline")
+
 v2.1.5
   * failed login is retried after 10 min, 30 min, then hourly (was 5 s+);
     the DSEWebNet lockout message is detected and waits an hour
@@ -60,7 +64,7 @@ import aiohttp
 import paho.mqtt.client as mqtt
 import yarl
 
-VERSION = "2.1.5"
+VERSION = "2.1.6"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -115,7 +119,7 @@ CONTROLLER_MODEL = cfg("controller_model", "DSE controller")
 DEVICE_NAME = cfg("device_name", "DSE Generator")
 SUBSCRIPTION_OVERRIDE = cfg("subscription_override", "")
 FILTER_SENTINELS = cfg("filter_sentinels", True, bool)
-PROBE_GROUPS = cfg("probe_groups", True, bool)
+PROBE_GROUPS = cfg("probe_groups", False, bool)
 
 HASS_PREFIX = "homeassistant"
 DEVICE_KEY = f"dse_{MODULE_ID or 'default'}"
@@ -512,7 +516,12 @@ def _default_subscription() -> dict:
         # DEF, SCR). A 4510/4520 has none of it and answers "####" to every
         # one of them, so they are left out rather than published as 17
         # permanently unknown entities.
-        "131": sorted({int(k) for k in PARAMS["131"]} | set(range(0, 64))),
+        # Only IDs from the module's instrument catalogue. Gateway firmware
+        # 4.6.x aborts the whole realtime session ("RT Rx error Cmd: 3") when
+        # asked for an instrument the module does not have, and DSEWebNet
+        # then reports the module offline. The old 0-63 padding requested 16
+        # such IDs on a DSE4520 MKII (35, 48-63).
+        "131": sorted({int(k) for k in PARAMS["131"]}),
         "132": [65535] + list(range(0, 16)),
     }
     modules["133"] = [65535] + list(range(0, 16))   # digital inputs
