@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.7
+
+### Fixed
+- **Realtime session still dropped after 2.1.6.** Trimming group 131 was not
+  enough: firmware 4.6.x also aborts the session on 65535 for the I/O groups
+  and on indexes the module does not have in groups 130, 132-136. Found with
+  `subscription_override`, adding one group at a time against a live
+  DSE4520 MKII. The default subscription now lists only indexes the
+  controller answers:
+  129 `[65535]`, 130 `0-4`, 131 catalogue, 132 `8, 9, 11`, 133 `0-3`,
+  134 `0-5`, 136 `1`, data blocks 5 and 8.
+- Gateway GPS (data block 3) is no longer requested.
+
+### Notes
+- `probe_groups` requests groups that do not exist and will drop the
+  realtime session on firmware 4.6.x. Leave it off.
+
 ## 2.1.6
 
 ### Fixed
